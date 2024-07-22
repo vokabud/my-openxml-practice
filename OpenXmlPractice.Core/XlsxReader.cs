@@ -1,15 +1,79 @@
 ﻿using DocumentFormat.OpenXml;
-using System.Buffers;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
-using DocumentFormat.OpenXml.Wordprocessing;
 using System.Text.RegularExpressions;
+using OpenXmlPractice.Core.Extensions;
 
 namespace OpenXmlPractice.Core;
 
 public static class XlsxReader
 {
-    public static void UpdateCellValue(string filePath, string sheetName, uint rowIndex, string cellReference, string newValue)
+    public static string FindFirstEmptyCellInColumn(
+        string filePath,
+        string sheetName,
+        string columnName)
+    {
+        using SpreadsheetDocument document = SpreadsheetDocument.Open(filePath, false);
+
+        var workbookPart = document.WorkbookPart;
+        var worksheet = workbookPart.GetWorksheetByName(sheetName);
+
+        var rows = worksheet.Descendants<Row>();
+
+        foreach (var row in worksheet.Descendants<Row>())
+        {
+            var cellReference = columnName + row.RowIndex;
+
+            var cell = row
+                .Elements<Cell>()
+                .FirstOrDefault(c => c.CellReference == cellReference);
+
+            if (cell == null || string.IsNullOrEmpty(workbookPart.GetCellValue(cell)))
+            {
+                return cellReference;
+            }
+        }
+
+        throw new InvalidOperationException("No empty cell found in the column");
+    }
+    public static string GetCellReference(
+        string filePath,
+        string sheetName,
+        uint rowIndex,
+        string value)
+    {
+        using var document = SpreadsheetDocument.Open(filePath, false);
+
+        var workbookPart = document.WorkbookPart;
+        var row = workbookPart
+            .GetWorksheetByName(sheetName)
+            .GetRowByIndex(rowIndex);
+
+        var cellReference = string.Empty;
+
+        foreach (var cell in row.Elements<Cell>())
+        {
+            if (workbookPart.GetCellValue(cell) == value)
+            {
+                cellReference = cell.CellReference.Value;
+                break;
+            }
+        }
+
+        if (string.IsNullOrEmpty(cellReference))
+        {
+            return null;
+        }
+
+        return Regex.Replace(cellReference, @"[\d-]", string.Empty);
+    }
+
+    public static void UpdateCellValue(
+        string filePath,
+        string sheetName,
+        uint rowIndex,
+        string cellReference,
+        string newValue)
     {
         using var  document = SpreadsheetDocument.Open(filePath, true);
 
@@ -61,19 +125,7 @@ public static class XlsxReader
 
         var workbookPart = document.WorkbookPart;
 
-        var sheet = workbookPart
-            .Workbook
-            .Descendants<Sheet>()
-            .FirstOrDefault(s => s.Name == sheetName);
-
-        if (sheet == null)
-        {
-            Console.WriteLine("Sheet not found.");
-            return 0;
-        }
-
-        var worksheetPart = (WorksheetPart)(workbookPart.GetPartById(sheet.Id));
-        var worksheet = worksheetPart.Worksheet;
+        var worksheet = workbookPart.GetWorksheetByName(sheetName);
 
         // Iterate through the rows to find the one with the specified value in the first column
         Row targetRow = null;
@@ -81,11 +133,11 @@ public static class XlsxReader
 
         foreach (var row in rows)
         {
-            Cell firstCell = row
+            var firstCell = row
                 .Elements<Cell>()
                 .FirstOrDefault(c => c.CellReference.Value.StartsWith(cellReference));
 
-            if (firstCell != null && GetCellValue(document, firstCell) == userName)
+            if (firstCell != null && workbookPart.GetCellValue(firstCell) == userName)
             {
                 targetRow = row;
                 break;
@@ -99,80 +151,5 @@ public static class XlsxReader
         }
 
         return targetRow.RowIndex;
-    }
-
-    public static string GetCellReference(
-        string filePath,
-        string sheetName,
-        uint rowIndex,
-        string searchValue)
-    {
-        using SpreadsheetDocument document = SpreadsheetDocument.Open(filePath, false);
-
-        var workbookPart = document.WorkbookPart;
-        var sheet = workbookPart
-            .Workbook
-            .Descendants<Sheet>()
-            .FirstOrDefault(s => s.Name == sheetName);
-
-        if (sheet == null)
-        {
-            Console.WriteLine("Sheet not found.");
-            return null;
-        }
-
-        var worksheetPart = (WorksheetPart)(workbookPart.GetPartById(sheet.Id));
-        var worksheet = worksheetPart.Worksheet;
-
-        // Get the specified row
-        var row = worksheet
-            .GetFirstChild<SheetData>()
-            .Elements<Row>()
-            .FirstOrDefault(r => r.RowIndex == rowIndex);
-
-        if (row == null)
-        {
-            Console.WriteLine("The specified row does not exist.");
-            return null;
-        }
-
-        // Iterate through the cells in the row to find the cell with the specified value
-        foreach (Cell cell in row.Elements<Cell>())
-        {
-            if (GetCellValue(document, cell) == searchValue)
-            {
-                return Regex.Replace(cell.CellReference.Value, @"[\d-]", string.Empty);
-            }
-        }
-
-        // Return null if the value is not found
-        return null;
-    }
-
-
-
-    static string GetCellValue(
-        SpreadsheetDocument document,
-        Cell cell)
-    {
-        if (cell.CellValue == null)
-        {
-            return null;
-        }
-
-        string value = cell.CellValue.Text;
-        if (cell.DataType != null && cell.DataType.Value == CellValues.SharedString)
-        {
-            return document.WorkbookPart.SharedStringTablePart.SharedStringTable.Elements<SharedStringItem>().ElementAt(int.Parse(value)).InnerText;
-        }
-
-        return value;
-    }
-
-    static Cell GetCell(
-        Row row,
-        string columnName)
-    {
-        return row.Elements<Cell>().FirstOrDefault(c => string.Compare(c.CellReference.Value, columnName + row.RowIndex, true) == 0);
     }
 }
